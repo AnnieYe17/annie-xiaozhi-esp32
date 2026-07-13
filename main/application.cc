@@ -315,8 +315,8 @@ void Application::HandleActivationDoneEvent() {
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
 
     Schedule([this]() {
-        // Play the success sound to indicate the device is ready
-        audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+        ESP_LOGI(TAG, "Starting test dialogue connection");
+        StartListening();
     });
 }
 
