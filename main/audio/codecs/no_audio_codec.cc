@@ -1,6 +1,7 @@
 #include "no_audio_codec.h"
 
 #include <esp_log.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -14,6 +15,38 @@ NoAudioCodec::~NoAudioCodec() {
     if (tx_handle_ != nullptr) {
         ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));
     }
+}
+
+void NoAudioCodec::Start() {
+    AudioCodec::Start();
+
+#ifdef AUDIO_CODEC_OUTPUT_TEST
+    ESP_LOGI(TAG, "Playing output test tone");
+    EnableOutput(true);
+
+    constexpr int kToneFrequency = 440;
+    constexpr int kToneAmplitude = 12000;
+    constexpr int kBlockSamples = 512;
+    constexpr float kPi = 3.14159265358979323846f;
+    int total_samples = output_sample_rate_ / 2;
+    std::vector<int16_t> buffer(kBlockSamples);
+
+    for (int offset = 0; offset < total_samples; offset += kBlockSamples) {
+        int block_samples = std::min(kBlockSamples, total_samples - offset);
+        for (int i = 0; i < block_samples; i++) {
+            float t = static_cast<float>(offset + i) / output_sample_rate_;
+            buffer[i] = static_cast<int16_t>(sinf(2.0f * kPi * kToneFrequency * t) * kToneAmplitude);
+        }
+        Write(buffer.data(), block_samples);
+    }
+
+    std::fill(buffer.begin(), buffer.end(), 0);
+    for (int i = 0; i < 4; i++) {
+        Write(buffer.data(), kBlockSamples);
+    }
+    EnableOutput(false);
+    ESP_LOGI(TAG, "Output test tone finished");
+#endif
 }
 
 NoAudioCodecDuplex::NoAudioCodecDuplex(int input_sample_rate, int output_sample_rate, gpio_num_t bclk, gpio_num_t ws, gpio_num_t dout, gpio_num_t din) {
@@ -162,6 +195,9 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
     };
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, nullptr));
 
+    bool spk_stereo = spk_slot_mask == I2S_STD_SLOT_BOTH;
+    output_channels_ = spk_stereo ? 2 : 1;
+
     i2s_std_config_t std_cfg = {
         .clk_cfg = {
             .sample_rate_hz = (uint32_t)output_sample_rate_,
@@ -173,15 +209,15 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
 
         },
         .slot_cfg = {
-            .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
+            .data_bit_width = spk_stereo ? I2S_DATA_BIT_WIDTH_16BIT : I2S_DATA_BIT_WIDTH_32BIT,
             .slot_bit_width = I2S_SLOT_BIT_WIDTH_AUTO,
-            .slot_mode = I2S_SLOT_MODE_MONO,
+            .slot_mode = spk_stereo ? I2S_SLOT_MODE_STEREO : I2S_SLOT_MODE_MONO,
             .slot_mask = spk_slot_mask,
-            .ws_width = I2S_DATA_BIT_WIDTH_32BIT,
+            .ws_width = spk_stereo ? I2S_DATA_BIT_WIDTH_16BIT : I2S_DATA_BIT_WIDTH_32BIT,
             .ws_pol = false,
             .bit_shift = true,
             #ifdef   I2S_HW_VERSION_2
-                .left_align = true,
+                .left_align = spk_stereo ? false : true,
                 .big_endian = false,
                 .bit_order_lsb = false
             #endif
@@ -217,6 +253,36 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
 
 int NoAudioCodec::Write(const int16_t* data, int samples) {
     std::lock_guard<std::mutex> lock(data_if_mutex_);
+
+    // Some I2S amplifiers, such as MAX98357A modules, may be strapped to either
+    // channel. Stereo output keeps the same mono PCM on both LRCK phases.
+    if (output_channels_ == 2) {
+        std::vector<int16_t> buffer(samples * 2);
+        int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+        for (int i = 0; i < samples; i++) {
+            int64_t temp = int64_t(data[i]) * volume_factor / 65536;
+            int16_t sample = temp > INT16_MAX ? INT16_MAX : temp < INT16_MIN ? INT16_MIN : static_cast<int16_t>(temp);
+            buffer[i * 2] = sample;
+            buffer[i * 2 + 1] = sample;
+        }
+
+        static int debug_count = 0;
+        if (debug_count < 120) {
+            ESP_LOGI(TAG, "SPK WRITE: samples=%d channels=%d first_sample=%d",
+                samples, output_channels_, samples > 0 ? data[0] : 0);
+        }
+
+        size_t bytes_written = 0;
+        ESP_ERROR_CHECK(i2s_channel_write(tx_handle_, buffer.data(), buffer.size() * sizeof(int16_t), &bytes_written, portMAX_DELAY));
+
+        if (debug_count < 120) {
+            ESP_LOGI(TAG, "SPK WRITE DONE: bytes=%d", bytes_written);
+            debug_count++;
+        }
+
+        return bytes_written / sizeof(int16_t) / 2;
+    }
+
     std::vector<int32_t> buffer(samples);
 
     // output_volume_: 0-100

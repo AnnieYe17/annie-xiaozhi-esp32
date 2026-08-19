@@ -1086,6 +1086,10 @@ target_compile_definitions(${COMPONENT_LIB}
                     PRIVATE BUILTIN_TEXT_FONT=${BUILTIN_TEXT_FONT} BUILTIN_ICON_FONT=${BUILTIN_ICON_FONT}
                     )
 
+if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE AUDIO_CODEC_OUTPUT_TEST)
+endif()
+
 # Add generation rules
 add_custom_command(
     OUTPUT ${LANG_HEADER}

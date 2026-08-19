@@ -18,6 +18,7 @@ protected:
 
 public:
     virtual ~NoAudioCodec();
+    virtual void Start() override;
 };
 
 class NoAudioCodecDuplex : public NoAudioCodec {

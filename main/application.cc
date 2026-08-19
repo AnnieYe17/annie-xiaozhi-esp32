@@ -496,8 +496,12 @@ void Application::InitializeProtocol() {
     });
     
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+        ESP_LOGI(TAG, "Incoming audio: state=%d sample_rate=%d duration=%d payload=%u",
+            (int)GetDeviceState(), packet->sample_rate, packet->frame_duration, packet->payload.size());
         if (GetDeviceState() == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
+        } else {
+            ESP_LOGW(TAG, "Drop incoming audio because device is not speaking");
         }
     });
     
@@ -1128,4 +1132,3 @@ void Application::ResetProtocol() {
         protocol_.reset();
     });
 }
-
