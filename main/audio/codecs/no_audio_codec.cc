@@ -318,6 +318,25 @@ int NoAudioCodec::Read(int16_t* dest, int samples) {
         int32_t value = bit32_buffer[i] >> 12;
         dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
     }
+
+    int32_t peak = 0;
+    for (int i = 0; i < samples; i++) {
+        int32_t v = static_cast<int32_t>(dest[i]);
+        int32_t abs_v = v < 0 ? -v : v;
+        if (abs_v > peak) {
+            peak = abs_v;
+        }
+    }
+
+    static int log_count = 0;
+    if (++log_count >= 50) {
+        ESP_LOGI("MIC_TEST", "bytes=%d peak=%ld first=%d",
+            static_cast<int>(bytes_read),
+            static_cast<long>(peak),
+            samples > 0 ? dest[0] : 0);
+        log_count = 0;
+    }
+
     return samples;
 }
 
