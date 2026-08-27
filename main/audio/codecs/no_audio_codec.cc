@@ -241,13 +241,46 @@ NoAudioCodecSimplex::NoAudioCodecSimplex(int input_sample_rate, int output_sampl
     // Create a new channel for MIC
     chan_cfg.id = (i2s_port_t)1;
     ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, nullptr, &rx_handle_));
-    std_cfg.clk_cfg.sample_rate_hz = (uint32_t)input_sample_rate_;
-    std_cfg.slot_cfg.slot_mask = mic_slot_mask;
-    std_cfg.gpio_cfg.bclk = mic_sck;
-    std_cfg.gpio_cfg.ws = mic_ws;
-    std_cfg.gpio_cfg.dout = I2S_GPIO_UNUSED;
-    std_cfg.gpio_cfg.din = mic_din;
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
+
+    i2s_std_config_t mic_cfg = {
+        .clk_cfg = {
+            .sample_rate_hz = (uint32_t)input_sample_rate_,
+            .clk_src = I2S_CLK_SRC_DEFAULT,
+            .mclk_multiple = I2S_MCLK_MULTIPLE_256,
+            #ifdef   I2S_HW_VERSION_2
+                .ext_clk_freq_hz = 0,
+            #endif
+
+        },
+        .slot_cfg = {
+            .data_bit_width = I2S_DATA_BIT_WIDTH_32BIT,
+            .slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT,
+            .slot_mode = I2S_SLOT_MODE_MONO,
+            .slot_mask = mic_slot_mask,
+            .ws_width = 32,
+            .ws_pol = false,
+            .bit_shift = true,
+            #ifdef   I2S_HW_VERSION_2
+                .left_align = false,
+                .big_endian = false,
+                .bit_order_lsb = false
+            #endif
+
+        },
+        .gpio_cfg = {
+            .mclk = I2S_GPIO_UNUSED,
+            .bclk = mic_sck,
+            .ws = mic_ws,
+            .dout = I2S_GPIO_UNUSED,
+            .din = mic_din,
+            .invert_flags = {
+                .mclk_inv = false,
+                .bclk_inv = false,
+                .ws_inv = false
+            }
+        }
+    };
+    ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &mic_cfg));
     ESP_LOGI(TAG, "Simplex channels created");
 }
 
@@ -315,7 +348,7 @@ int NoAudioCodec::Read(int16_t* dest, int samples) {
 
     samples = bytes_read / sizeof(int32_t);
     for (int i = 0; i < samples; i++) {
-        int32_t value = bit32_buffer[i] >> 12;
+        int32_t value = bit32_buffer[i] >> 16;
         dest[i] = (value > INT16_MAX) ? INT16_MAX : (value < -INT16_MAX) ? -INT16_MAX : (int16_t)value;
     }
 

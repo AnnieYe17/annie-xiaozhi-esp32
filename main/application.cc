@@ -313,11 +313,6 @@ void Application::HandleActivationDoneEvent() {
     ota_.reset();
     auto& board = Board::GetInstance();
     board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-
-    Schedule([this]() {
-        ESP_LOGI(TAG, "Starting test dialogue connection");
-        StartListening();
-    });
 }
 
 void Application::ActivationTask() {
