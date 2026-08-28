@@ -1088,6 +1088,7 @@ target_compile_definitions(${COMPONENT_LIB}
 
 if(CONFIG_BOARD_TYPE_BREAD_COMPACT_WIFI)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE AUDIO_CODEC_OUTPUT_TEST)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE AUDIO_OUTPUT_GAIN=1.5)
 endif()
 
 # Add generation rules

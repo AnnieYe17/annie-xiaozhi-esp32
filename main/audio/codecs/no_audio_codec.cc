@@ -8,6 +8,10 @@
 
 #define TAG "NoAudioCodec"
 
+#ifndef AUDIO_OUTPUT_GAIN
+#define AUDIO_OUTPUT_GAIN 1.0
+#endif
+
 NoAudioCodec::~NoAudioCodec() {
     if (rx_handle_ != nullptr) {
         ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
@@ -291,7 +295,7 @@ int NoAudioCodec::Write(const int16_t* data, int samples) {
     // channel. Stereo output keeps the same mono PCM on both LRCK phases.
     if (output_channels_ == 2) {
         std::vector<int16_t> buffer(samples * 2);
-        int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+        int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * AUDIO_OUTPUT_GAIN * 65536;
         for (int i = 0; i < samples; i++) {
             int64_t temp = int64_t(data[i]) * volume_factor / 65536;
             int16_t sample = temp > INT16_MAX ? INT16_MAX : temp < INT16_MIN ? INT16_MIN : static_cast<int16_t>(temp);
@@ -320,7 +324,7 @@ int NoAudioCodec::Write(const int16_t* data, int samples) {
 
     // output_volume_: 0-100
     // volume_factor_: 0-65536
-    int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * 65536;
+    int32_t volume_factor = pow(double(output_volume_) / 100.0, 2) * AUDIO_OUTPUT_GAIN * 65536;
     for (int i = 0; i < samples; i++) {
         int64_t temp = int64_t(data[i]) * volume_factor; // 使用 int64_t 进行乘法运算
         if (temp > INT32_MAX) {
