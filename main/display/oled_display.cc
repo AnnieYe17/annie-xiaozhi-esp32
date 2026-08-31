@@ -1,21 +1,70 @@
 #include "oled_display.h"
+#include "oled_emotion_display.h"
 #include "assets/lang_config.h"
 #include "lvgl_theme.h"
 #include "lvgl_font.h"
 
-#include <string>
-#include <algorithm>
+#include <cstring>
 
 #include <esp_log.h>
 #include <esp_err.h>
 #include <esp_lvgl_port.h>
-#include <font_awesome.h>
 
 #define TAG "OledDisplay"
 
 LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_awesome_30_1);
+
+namespace {
+bool IsNetworkStatusText(const char* text) {
+    if (text == nullptr || text[0] == '\0') {
+        return false;
+    }
+
+    return strcmp(text, Lang::Strings::INITIALIZING) == 0 ||
+        strcmp(text, Lang::Strings::SCANNING_WIFI) == 0 ||
+        strcmp(text, Lang::Strings::REGISTERING_NETWORK) == 0 ||
+        strcmp(text, Lang::Strings::DETECTING_MODULE) == 0 ||
+        strcmp(text, Lang::Strings::CONNECTING) == 0 ||
+        strcmp(text, Lang::Strings::SWITCH_TO_WIFI_NETWORK) == 0 ||
+        strcmp(text, Lang::Strings::SWITCH_TO_4G_NETWORK) == 0 ||
+        strcmp(text, Lang::Strings::WIFI_CONFIG_MODE) == 0 ||
+        strcmp(text, Lang::Strings::ENTERING_WIFI_CONFIG_MODE) == 0 ||
+        strncmp(text, Lang::Strings::CONNECT_TO, strlen(Lang::Strings::CONNECT_TO)) == 0 ||
+        strncmp(text, Lang::Strings::CONNECT_TO_HOTSPOT, strlen(Lang::Strings::CONNECT_TO_HOTSPOT)) == 0;
+}
+
+PetEmotion PetEmotionFromName(const char* emotion) {
+    if (emotion == nullptr) {
+        return PetEmotion::Neutral;
+    }
+    if (strcmp(emotion, "happy") == 0 || strcmp(emotion, "laughing") == 0 ||
+        strcmp(emotion, "funny") == 0 || strcmp(emotion, "loving") == 0 ||
+        strcmp(emotion, "embarrassed") == 0 || strcmp(emotion, "confident") == 0 ||
+        strcmp(emotion, "delicious") == 0 || strcmp(emotion, "winking") == 0 ||
+        strcmp(emotion, "relaxed") == 0) {
+        return PetEmotion::Happy;
+    }
+    if (strcmp(emotion, "sad") == 0 || strcmp(emotion, "crying") == 0) {
+        return PetEmotion::Sad;
+    }
+    if (strcmp(emotion, "angry") == 0) {
+        return PetEmotion::Angry;
+    }
+    if (strcmp(emotion, "thinking") == 0 || strcmp(emotion, "confused") == 0) {
+        return PetEmotion::Thinking;
+    }
+    if (strcmp(emotion, "sleepy") == 0 || strcmp(emotion, "silly") == 0) {
+        return PetEmotion::Sleepy;
+    }
+    if (strcmp(emotion, "surprised") == 0 || strcmp(emotion, "shocked") == 0 ||
+        strcmp(emotion, "cool") == 0 || strcmp(emotion, "kissy") == 0) {
+        return PetEmotion::Speaking;
+    }
+    return PetEmotion::Speaking;
+}
+}
 
 OledDisplay::OledDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel,
     int width, int height, bool mirror_x, bool mirror_y)
@@ -96,6 +145,9 @@ void OledDisplay::SetupUI() {
 }
 
 OledDisplay::~OledDisplay() {
+    if (emotion_display_ != nullptr) {
+        delete emotion_display_;
+    }
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -144,25 +196,57 @@ void OledDisplay::Unlock() {
 }
 
 void OledDisplay::SetChatMessage(const char* role, const char* content) {
+    (void)role;
+    (void)content;
+
     DisplayLockGuard lock(this);
     if (chat_message_label_ == nullptr) {
         return;
     }
 
-    // Replace all newlines with spaces
-    std::string content_str = content;
-    std::replace(content_str.begin(), content_str.end(), '\n', ' ');
-
-    if (content_right_ == nullptr) {
-        lv_label_set_text(chat_message_label_, content_str.c_str());
-    } else {
-        if (content == nullptr || content[0] == '\0') {
-            lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_label_set_text(chat_message_label_, content_str.c_str());
-            lv_obj_remove_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
-        }
+    lv_label_set_text(chat_message_label_, "");
+    if (content_right_ != nullptr) {
+        lv_obj_add_flag(content_right_, LV_OBJ_FLAG_HIDDEN);
     }
+}
+
+void OledDisplay::SetStatus(const char* status) {
+    DisplayLockGuard lock(this);
+    if (status_label_ == nullptr) {
+        return;
+    }
+
+    if (status == nullptr || status[0] == '\0') {
+        HideStatusText();
+        HideIdleEyes();
+    } else if (strcmp(status, Lang::Strings::STANDBY) == 0) {
+        ShowIdleEyes();
+    } else if (strcmp(status, Lang::Strings::LISTENING) == 0) {
+        HideStatusText();
+        if (emotion_display_ != nullptr) {
+            emotion_display_->SetEmotion(PetEmotion::Listening);
+        }
+    } else if (strcmp(status, Lang::Strings::SPEAKING) == 0) {
+        HideStatusText();
+        if (emotion_display_ != nullptr) {
+            emotion_display_->SetEmotion(PetEmotion::Speaking);
+        }
+    } else if (IsNetworkStatusText(status)) {
+        HideIdleEyes();
+        lv_label_set_text(status_label_, status);
+        lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        if (notification_label_ != nullptr) {
+            lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+    } else {
+        HideStatusText();
+        HideIdleEyes();
+    }
+}
+
+void OledDisplay::ShowNotification(const char* notification, int duration_ms) {
+    (void)duration_ms;
+    SetStatus(notification);
 }
 
 void OledDisplay::SetupUI_128x64() {
@@ -171,8 +255,6 @@ void OledDisplay::SetupUI_128x64() {
     auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
     auto text_font = lvgl_theme->text_font()->font();
     auto icon_font = lvgl_theme->icon_font()->font();
-    auto large_icon_font = lvgl_theme->large_icon_font()->font();
-
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
     lv_obj_set_style_text_color(screen, lv_color_black(), 0);
@@ -256,12 +338,6 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_pad_all(content_left_, 0, 0);
     lv_obj_set_style_border_width(content_left_, 0, 0);
 
-    emotion_label_ = lv_label_create(content_left_);
-    lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
-    lv_obj_center(emotion_label_);
-    lv_obj_set_style_pad_top(emotion_label_, 8, 0);
-
     content_right_ = lv_obj_create(content_);
     lv_obj_set_size(content_right_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_pad_all(content_right_, 0, 0);
@@ -295,6 +371,8 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+
+    emotion_display_ = new OledEmotionDisplay(screen);
 }
 
 void OledDisplay::SetupUI_128x32() {
@@ -303,8 +381,6 @@ void OledDisplay::SetupUI_128x32() {
     auto lvgl_theme = static_cast<LvglTheme*>(current_theme_);
     auto text_font = lvgl_theme->text_font()->font();
     auto icon_font = lvgl_theme->icon_font()->font();
-    auto large_icon_font = lvgl_theme->large_icon_font()->font();
-
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
 
@@ -318,19 +394,15 @@ void OledDisplay::SetupUI_128x32() {
 
     /* Emotion label on the left side */
     content_ = lv_obj_create(container_);
-    lv_obj_set_size(content_, 32, 32);
+    lv_obj_set_size(content_, 0, 32);
     lv_obj_set_style_pad_all(content_, 0, 0);
     lv_obj_set_style_border_width(content_, 0, 0);
     lv_obj_set_style_radius(content_, 0, 0);
-
-    emotion_label_ = lv_label_create(content_);
-    lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
-    lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
-    lv_obj_center(emotion_label_);
+    lv_obj_add_flag(content_, LV_OBJ_FLAG_HIDDEN);
 
     /* Right side */
     side_bar_ = lv_obj_create(container_);
-    lv_obj_set_size(side_bar_, width_ - 32, 32);
+    lv_obj_set_size(side_bar_, width_, 32);
     lv_obj_set_flex_flow(side_bar_, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(side_bar_, 0, 0);
     lv_obj_set_style_border_width(side_bar_, 0, 0);
@@ -339,7 +411,7 @@ void OledDisplay::SetupUI_128x32() {
 
     /* Status bar */
     status_bar_ = lv_obj_create(side_bar_);
-    lv_obj_set_size(status_bar_, width_ - 32, 16);
+    lv_obj_set_size(status_bar_, width_, 16);
     lv_obj_set_style_radius(status_bar_, 0, 0);
     lv_obj_set_flex_flow(status_bar_, LV_FLEX_FLOW_ROW);
     lv_obj_set_style_pad_all(status_bar_, 0, 0);
@@ -348,12 +420,12 @@ void OledDisplay::SetupUI_128x32() {
 
     status_label_ = lv_label_create(status_bar_);
     lv_obj_set_flex_grow(status_label_, 1);
-    lv_obj_set_style_pad_left(status_label_, 2, 0);
+    lv_obj_set_style_text_align(status_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
 
     notification_label_ = lv_label_create(status_bar_);
     lv_obj_set_flex_grow(notification_label_, 1);
-    lv_obj_set_style_pad_left(notification_label_, 2, 0);
+    lv_obj_set_style_text_align(notification_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(notification_label_, "");
     lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
 
@@ -370,8 +442,8 @@ void OledDisplay::SetupUI_128x32() {
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
 
     chat_message_label_ = lv_label_create(side_bar_);
-    lv_obj_set_size(chat_message_label_, width_ - 32, LV_SIZE_CONTENT);
-    lv_obj_set_style_pad_left(chat_message_label_, 2, 0);
+    lv_obj_set_size(chat_message_label_, width_, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_left(chat_message_label_, 0, 0);
     lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_label_set_text(chat_message_label_, "");
 
@@ -382,18 +454,35 @@ void OledDisplay::SetupUI_128x32() {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_obj_set_style_anim(chat_message_label_, &a, LV_PART_MAIN);
     lv_obj_set_style_anim_duration(chat_message_label_, lv_anim_speed_clamped(60, 300, 60000), LV_PART_MAIN);
+
+    emotion_display_ = nullptr;
 }
 
 void OledDisplay::SetEmotion(const char* emotion) {
-    const char* utf8 = font_awesome_get_utf8(emotion);
     DisplayLockGuard lock(this);
-    if (emotion_label_ == nullptr) {
+    if (emotion == nullptr || emotion[0] == '\0' || strcmp(emotion, "neutral") == 0 || strcmp(emotion, "microchip_ai") == 0) {
         return;
     }
-    if (utf8 != nullptr) {
-        lv_label_set_text(emotion_label_, utf8);
-    } else {
-        lv_label_set_text(emotion_label_, FONT_AWESOME_NEUTRAL);
+
+    HideStatusText();
+    if (emotion_display_ != nullptr) {
+        emotion_display_->SetEmotion(PetEmotionFromName(emotion));
+    }
+}
+
+void OledDisplay::OnWakeWordInvoking() {
+    DisplayLockGuard lock(this);
+    HideStatusText();
+    if (emotion_display_ != nullptr) {
+        emotion_display_->SetEmotion(PetEmotion::Waking);
+    }
+}
+
+void OledDisplay::OnWakeWordDetected() {
+    DisplayLockGuard lock(this);
+    HideStatusText();
+    if (emotion_display_ != nullptr) {
+        emotion_display_->SetEmotion(PetEmotion::Wakeup);
     }
 }
 
@@ -405,4 +494,31 @@ void OledDisplay::SetTheme(Theme* theme) {
 
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
+}
+
+void OledDisplay::UpdateStatusBar(bool update_all) {
+}
+
+void OledDisplay::ShowIdleEyes() {
+    HideStatusText();
+    if (emotion_display_ != nullptr) {
+        emotion_display_->ShowIdleEyes();
+    }
+}
+
+void OledDisplay::HideIdleEyes() {
+    if (emotion_display_ != nullptr) {
+        emotion_display_->Hide();
+    }
+}
+
+void OledDisplay::HideStatusText() {
+    if (status_label_ != nullptr) {
+        lv_label_set_text(status_label_, "");
+        lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (notification_label_ != nullptr) {
+        lv_label_set_text(notification_label_, "");
+        lv_obj_add_flag(notification_label_, LV_OBJ_FLAG_HIDDEN);
+    }
 }

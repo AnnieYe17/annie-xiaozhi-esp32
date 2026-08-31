@@ -788,6 +788,8 @@ void Application::HandleWakeWordDetectedEvent() {
     if (state == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
         auto wake_word = audio_service_.GetLastWakeWord();
+        wake_word_invoking_ = true;
+        Board::GetInstance().GetDisplay()->OnWakeWordInvoking();
 
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
@@ -806,6 +808,7 @@ void Application::HandleWakeWordDetectedEvent() {
         while (audio_service_.PopPacketFromSendQueue());
 
         if (state == kDeviceStateListening) {
+            Board::GetInstance().GetDisplay()->OnWakeWordDetected();
             protocol_->SendStartListening(GetDefaultListeningMode());
             audio_service_.ResetDecoder();
             audio_service_.PlaySound(Lang::Sounds::OGG_POPUP);
@@ -814,6 +817,7 @@ void Application::HandleWakeWordDetectedEvent() {
         } else {
             // Play popup sound and start listening again
             play_popup_on_listening_ = true;
+            wake_word_animation_pending_ = true;
             SetListeningMode(GetDefaultListeningMode());
         }
     } else if (state == kDeviceStateActivating) {
@@ -824,7 +828,9 @@ void Application::HandleWakeWordDetectedEvent() {
 
 void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     // Check state again in case it was changed during scheduling
-    if (GetDeviceState() != kDeviceStateConnecting) {
+    auto state = GetDeviceState();
+    if (state != kDeviceStateConnecting && state != kDeviceStateIdle) {
+        wake_word_invoking_ = false;
         return;
     }
 
@@ -834,12 +840,14 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
 
     if (!protocol_->IsAudioChannelOpened()) {
         if (!protocol_->OpenAudioChannel()) {
+            wake_word_invoking_ = false;
             audio_service_.EnableWakeWordDetection(true);
             return;
         }
     }
 
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
+    wake_word_animation_pending_ = true;
 #if CONFIG_SEND_WAKE_WORD_DATA
     // Encode and send the wake word data to the server
     while (auto packet = audio_service_.PopWakeWordPacket()) {
@@ -868,6 +876,7 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            wake_word_invoking_ = false;
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();  // Clear messages first
             display->SetEmotion("neutral"); // Then set emotion (wechat mode checks child count)
@@ -875,13 +884,22 @@ void Application::HandleStateChangedEvent() {
             audio_service_.EnableWakeWordDetection(true);
             break;
         case kDeviceStateConnecting:
-            display->SetStatus(Lang::Strings::CONNECTING);
+            if (wake_word_invoking_) {
+                display->OnWakeWordInvoking();
+            } else {
+                display->SetStatus(Lang::Strings::CONNECTING);
+            }
             display->SetEmotion("neutral");
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
+            wake_word_invoking_ = false;
             display->SetStatus(Lang::Strings::LISTENING);
             display->SetEmotion("neutral");
+            if (wake_word_animation_pending_) {
+                wake_word_animation_pending_ = false;
+                display->OnWakeWordDetected();
+            }
 
             // Make sure the audio processor is running
             if (play_popup_on_listening_ || !audio_service_.IsAudioProcessorRunning()) {
@@ -1029,6 +1047,8 @@ void Application::WakeWordInvoke(const std::string& wake_word) {
     
     if (state == kDeviceStateIdle) {
         audio_service_.EncodeWakeWord();
+        wake_word_invoking_ = true;
+        Board::GetInstance().GetDisplay()->OnWakeWordInvoking();
 
         if (!protocol_->IsAudioChannelOpened()) {
             SetDeviceState(kDeviceStateConnecting);
