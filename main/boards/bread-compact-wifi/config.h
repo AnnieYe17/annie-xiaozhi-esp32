@@ -60,4 +60,9 @@
 // A MCP Test: Control a lamp
 #define LAMP_GPIO GPIO_NUM_18
 
+#define FL_GPIO_NUM GPIO_NUM_4
+#define FR_GPIO_NUM GPIO_NUM_5
+#define BL_GPIO_NUM GPIO_NUM_6
+#define BR_GPIO_NUM GPIO_NUM_7
+
 #endif // _BOARD_CONFIG_H_

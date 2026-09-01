@@ -9,11 +9,16 @@
 #include "lamp_controller.h"
 #include "led/single_led.h"
 #include "assets/lang_config.h"
+#include "servo_dog_ctrl.h"
 
 #include <esp_log.h>
+#include <esp_err.h>
 #include <driver/i2c_master.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <iot_servo.h>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
@@ -147,9 +152,99 @@ private:
         });
     }
 
+    void InitializeServoDog() {
+        servo_dog_ctrl_config_t config = {
+            .fl_gpio_num = FL_GPIO_NUM,
+            .fr_gpio_num = FR_GPIO_NUM,
+            .bl_gpio_num = BL_GPIO_NUM,
+            .br_gpio_num = BR_GPIO_NUM,
+        };
+
+        esp_err_t ret = servo_dog_ctrl_init(&config);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "servo_dog_ctrl initialized successfully");
+            vTaskDelay(pdMS_TO_TICKS(1000));
+
+            ret = iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 20);
+            ESP_LOGI(TAG, "direct FL servo angle 20 ret: %s", esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            ret = iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 120);
+            ESP_LOGI(TAG, "direct FL servo angle 120 ret: %s", esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            ret = servo_dog_ctrl_send(DOG_STATE_INSTALLATION, NULL);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "DOG_STATE_INSTALLATION command sent");
+            } else {
+                ESP_LOGE(TAG, "Failed to send INSTALLATION command: %s", esp_err_to_name(ret));
+            }
+        } else {
+            ESP_LOGE(TAG, "servo_dog_ctrl init failed: %s", esp_err_to_name(ret));
+        }
+    }
+
+    void RegisterServoDogTools() {
+        auto& mcp_server = McpServer::GetInstance();
+
+        mcp_server.AddTool("self.dog.basic_control", "机器人的基础动作。机器人可以做以下基础动作：\n"
+            "forward: 向前移动\nbackward: 向后移动\nturn_left: 向左转\nturn_right: 向右转\nstop: 立即停止当前动作",
+            PropertyList({
+                Property("action", kPropertyTypeString),
+            }), [](const PropertyList& properties) -> ReturnValue {
+                const std::string& action = properties["action"].value<std::string>();
+                if (action == "forward") {
+                    servo_dog_ctrl_send(DOG_STATE_FORWARD, NULL);
+                } else if (action == "backward") {
+                    servo_dog_ctrl_send(DOG_STATE_BACKWARD, NULL);
+                } else if (action == "turn_left") {
+                    servo_dog_ctrl_send(DOG_STATE_TURN_LEFT, NULL);
+                } else if (action == "turn_right") {
+                    servo_dog_ctrl_send(DOG_STATE_TURN_RIGHT, NULL);
+                } else if (action == "stop") {
+                    servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
+                } else {
+                    return false;
+                }
+                return true;
+            });
+
+        mcp_server.AddTool("self.dog.advanced_control", "机器人的扩展动作。机器人可以做以下扩展动作：\n"
+            "sway_back_forth: 前后摇摆\nlay_down: 趴下\nsway: 左右摇摆\nretract_legs: 收回腿部\n"
+            "shake_hand: 握手\nshake_back_legs: 伸懒腰\njump_forward: 向前跳跃",
+            PropertyList({
+                Property("action", kPropertyTypeString),
+            }), [](const PropertyList& properties) -> ReturnValue {
+                const std::string& action = properties["action"].value<std::string>();
+                if (action == "sway_back_forth") {
+                    servo_dog_ctrl_send(DOG_STATE_SWAY_BACK_FORTH, NULL);
+                } else if (action == "lay_down") {
+                    servo_dog_ctrl_send(DOG_STATE_LAY_DOWN, NULL);
+                } else if (action == "sway") {
+                    dog_action_args_t args = {
+                        .repeat_count = 4,
+                    };
+                    servo_dog_ctrl_send(DOG_STATE_SWAY, &args);
+                } else if (action == "retract_legs") {
+                    servo_dog_ctrl_send(DOG_STATE_RETRACT_LEGS, NULL);
+                } else if (action == "shake_hand") {
+                    servo_dog_ctrl_send(DOG_STATE_SHAKE_HAND, NULL);
+                } else if (action == "shake_back_legs") {
+                    servo_dog_ctrl_send(DOG_STATE_SHAKE_BACK_LEGS, NULL);
+                } else if (action == "jump_forward") {
+                    servo_dog_ctrl_send(DOG_STATE_JUMP_FORWARD, NULL);
+                } else {
+                    return false;
+                }
+                return true;
+            });
+    }
+
     // 物联网初始化，逐步迁移到 MCP 协议
     void InitializeTools() {
         static LampController lamp(LAMP_GPIO);
+        InitializeServoDog();
+        RegisterServoDogTools();
     }
 
 public:
