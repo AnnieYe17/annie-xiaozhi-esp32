@@ -18,7 +18,6 @@
 #include <esp_lcd_panel_vendor.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <iot_servo.h>
 
 #ifdef SH1106
 #include <esp_lcd_panel_sh1106.h>
@@ -153,6 +152,9 @@ private:
     }
 
     void InitializeServoDog() {
+        ESP_LOGI(TAG, "servo dog bring-up: fl=%d fr=%d bl=%d br=%d",
+                 FL_GPIO_NUM, FR_GPIO_NUM, BL_GPIO_NUM, BR_GPIO_NUM);
+
         servo_dog_ctrl_config_t config = {
             .fl_gpio_num = FL_GPIO_NUM,
             .fr_gpio_num = FR_GPIO_NUM,
@@ -162,25 +164,14 @@ private:
 
         esp_err_t ret = servo_dog_ctrl_init(&config);
         if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "servo_dog_ctrl initialized successfully");
-            vTaskDelay(pdMS_TO_TICKS(1000));
-
-            ret = iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 20);
-            ESP_LOGI(TAG, "direct FL servo angle 20 ret: %s", esp_err_to_name(ret));
-            vTaskDelay(pdMS_TO_TICKS(500));
-
-            ret = iot_servo_write_angle(LEDC_LOW_SPEED_MODE, 0, 120);
-            ESP_LOGI(TAG, "direct FL servo angle 120 ret: %s", esp_err_to_name(ret));
-            vTaskDelay(pdMS_TO_TICKS(500));
-
+            ESP_LOGI(TAG, "servo dog initialized successfully");
             ret = servo_dog_ctrl_send(DOG_STATE_INSTALLATION, NULL);
-            if (ret == ESP_OK) {
-                ESP_LOGI(TAG, "DOG_STATE_INSTALLATION command sent");
-            } else {
-                ESP_LOGE(TAG, "Failed to send INSTALLATION command: %s", esp_err_to_name(ret));
-            }
+            ESP_LOGI(TAG, "servo dog installation action ret: %s", esp_err_to_name(ret));
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            ret = servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
+            ESP_LOGI(TAG, "servo dog idle action ret: %s", esp_err_to_name(ret));
         } else {
-            ESP_LOGE(TAG, "servo_dog_ctrl init failed: %s", esp_err_to_name(ret));
+            ESP_LOGE(TAG, "servo dog init failed: %s", esp_err_to_name(ret));
         }
     }
 
@@ -193,17 +184,25 @@ private:
                 Property("action", kPropertyTypeString),
             }), [](const PropertyList& properties) -> ReturnValue {
                 const std::string& action = properties["action"].value<std::string>();
+                ESP_LOGI(TAG, "servo dog basic MCP action: %s", action.c_str());
+                esp_err_t ret = ESP_OK;
                 if (action == "forward") {
-                    servo_dog_ctrl_send(DOG_STATE_FORWARD, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_FORWARD, NULL);
                 } else if (action == "backward") {
-                    servo_dog_ctrl_send(DOG_STATE_BACKWARD, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_BACKWARD, NULL);
                 } else if (action == "turn_left") {
-                    servo_dog_ctrl_send(DOG_STATE_TURN_LEFT, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_TURN_LEFT, NULL);
                 } else if (action == "turn_right") {
-                    servo_dog_ctrl_send(DOG_STATE_TURN_RIGHT, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_TURN_RIGHT, NULL);
                 } else if (action == "stop") {
-                    servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_IDLE, NULL);
                 } else {
+                    ESP_LOGW(TAG, "unknown servo dog basic action: %s", action.c_str());
+                    return false;
+                }
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "servo dog basic action failed: %s, ret=%s",
+                             action.c_str(), esp_err_to_name(ret));
                     return false;
                 }
                 return true;
@@ -216,24 +215,32 @@ private:
                 Property("action", kPropertyTypeString),
             }), [](const PropertyList& properties) -> ReturnValue {
                 const std::string& action = properties["action"].value<std::string>();
+                ESP_LOGI(TAG, "servo dog advanced MCP action: %s", action.c_str());
+                esp_err_t ret = ESP_OK;
                 if (action == "sway_back_forth") {
-                    servo_dog_ctrl_send(DOG_STATE_SWAY_BACK_FORTH, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_SWAY_BACK_FORTH, NULL);
                 } else if (action == "lay_down") {
-                    servo_dog_ctrl_send(DOG_STATE_LAY_DOWN, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_LAY_DOWN, NULL);
                 } else if (action == "sway") {
                     dog_action_args_t args = {
                         .repeat_count = 4,
                     };
-                    servo_dog_ctrl_send(DOG_STATE_SWAY, &args);
+                    ret = servo_dog_ctrl_send(DOG_STATE_SWAY, &args);
                 } else if (action == "retract_legs") {
-                    servo_dog_ctrl_send(DOG_STATE_RETRACT_LEGS, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_RETRACT_LEGS, NULL);
                 } else if (action == "shake_hand") {
-                    servo_dog_ctrl_send(DOG_STATE_SHAKE_HAND, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_SHAKE_HAND, NULL);
                 } else if (action == "shake_back_legs") {
-                    servo_dog_ctrl_send(DOG_STATE_SHAKE_BACK_LEGS, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_SHAKE_BACK_LEGS, NULL);
                 } else if (action == "jump_forward") {
-                    servo_dog_ctrl_send(DOG_STATE_JUMP_FORWARD, NULL);
+                    ret = servo_dog_ctrl_send(DOG_STATE_JUMP_FORWARD, NULL);
                 } else {
+                    ESP_LOGW(TAG, "unknown servo dog advanced action: %s", action.c_str());
+                    return false;
+                }
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "servo dog advanced action failed: %s, ret=%s",
+                             action.c_str(), esp_err_to_name(ret));
                     return false;
                 }
                 return true;

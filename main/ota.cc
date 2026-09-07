@@ -24,6 +24,7 @@
 
 #define TAG "Ota"
 
+static constexpr const char* DEFAULT_OTA_URL = "http://192.168.1.64:8091/api/device/ota";
 
 Ota::Ota() {
 #ifdef ESP_EFUSE_BLOCK_USR_DATA
@@ -44,12 +45,7 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
-    Settings settings("wifi", false);
-    std::string url = settings.GetString("ota_url");
-    if (url.empty()) {
-        url = CONFIG_OTA_URL;
-    }
-    return url;
+    return DEFAULT_OTA_URL;
 }
 
 std::unique_ptr<Http> Ota::SetupHttp() {

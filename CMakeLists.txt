@@ -5,6 +5,11 @@ cmake_minimum_required(VERSION 3.16)
 # Add this line to disable the specific warning
 add_compile_options(-Wno-missing-field-initializers)
 
+if("$ENV{IDF_COMPONENT_MANAGER}" STREQUAL "0")
+    file(GLOB MANAGED_COMPONENT_DIRS "${CMAKE_SOURCE_DIR}/managed_components/*")
+    list(APPEND EXTRA_COMPONENT_DIRS ${MANAGED_COMPONENT_DIRS})
+endif()
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # "Trim" the build. Include the minimal set of components, main, and anything it depends on.
 idf_build_set_property(MINIMAL_BUILD ON)
